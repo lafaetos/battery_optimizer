@@ -1,12 +1,12 @@
 {
   "domain": "battery_optimizer",
   "name": "Battery Solar Optimizer",
-  "codeowners": [],
+  "codeowners": ["@lafaetos"],
   "config_flow": true,
   "documentation": "https://github.com/lafaetos/battery_optimizer",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/lafaetos/battery_optimizer/issues",
   "requirements": [],
-  "version": "1.0.0",
+  "version": "0.1",
   "dependencies": ["solcast_solar"]
 }
