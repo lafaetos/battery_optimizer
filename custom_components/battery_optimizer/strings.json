@@ -1,0 +1,49 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Battery Solar Optimizer",
+        "description": "Configure your smart inverter and battery charging optimization rules.",
+        "data": {
+          "consumption_sensor": "Home Energy Consumption Sensor (kWh)",
+          "solcast_today_sensor": "Solcast Forecast Sensor (TODAY)",
+          "solcast_tomorrow_sensor": "Solcast Forecast Sensor (TOMORROW)",
+          "battery_soc_sensor": "Battery SoC Sensor (%)",
+          "battery_capacity_kwh": "Battery Capacity (kWh)",
+          "min_soc": "Minimum State of Charge (%)",
+          "soc_offset": "Night Charge Offset (%)",
+          "history_days": "History Depth for Analysis (Days)",
+          "night_start": "Night Tariff Start Time",
+          "night_end": "Night Tariff End Time",
+          "operation_mode": "Operation Mode"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Battery Optimizer",
+        "data": {
+          "consumption_sensor": "Home Energy Consumption Sensor (kWh)",
+          "solcast_today_sensor": "Solcast Forecast Sensor (TODAY)",
+          "solcast_tomorrow_sensor": "Solcast Forecast Sensor (TOMORROW)",
+          "battery_soc_sensor": "Battery SoC Sensor (%)",
+          "battery_capacity_kwh": "Battery Capacity (kWh)",
+          "min_soc": "Minimum State of Charge (%)",
+          "soc_offset": "Night Charge Offset (%)",
+          "history_days": "History Depth for Analysis (Days)",
+          "night_start": "Night Tariff Start Time",
+          "night_end": "Night Tariff End Time",
+          "operation_mode": "Operation Mode"
+        }
+      }
+    }
+  }
+}

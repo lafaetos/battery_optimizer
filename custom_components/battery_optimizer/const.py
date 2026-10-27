@@ -1,0 +1,16 @@
+DOMAIN = "battery_optimizer"
+
+CONF_CONSUMPTION_SENSOR = "consumption_sensor"
+CONF_SOLCAST_TODAY_SENSOR = "solcast_today_sensor"
+CONF_SOLCAST_TOMORROW_SENSOR = "solcast_tomorrow_sensor"
+CONF_BATTERY_SOC_SENSOR = "battery_soc_sensor"
+CONF_BATTERY_CAPACITY = "battery_capacity_kwh"
+CONF_MIN_SOC = "min_soc"
+CONF_SOC_OFFSET = "soc_offset"
+CONF_MODE = "operation_mode"
+CONF_NIGHT_START = "night_start"
+CONF_NIGHT_END = "night_end"
+CONF_HISTORY_DAYS = "history_days"
+
+MODE_MAX_CHARGE = "Max 100% Charge (Winter)"
+MODE_MAX_SOLAR = "Max Solar Utilization (Summer)"

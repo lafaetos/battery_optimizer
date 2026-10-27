@@ -1,0 +1,49 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Battery Solar Optimizer",
+        "description": "Налаштування правил оптимізації зарядки інвертора та акумулятора.",
+        "data": {
+          "consumption_sensor": "Датчик споживання енергії будинку (kWh)",
+          "solcast_today_sensor": "Прогноз Solcast (СЬОГОДНІ)",
+          "solcast_tomorrow_sensor": "Прогноз Solcast (ЗАВТРА)",
+          "battery_soc_sensor": "Датчик рівня заряду батареї (%)",
+          "battery_capacity_kwh": "Ємність акумулятора (kWh)",
+          "min_soc": "Мінімальний рівень заряду (%)",
+          "soc_offset": "Похибка/зміщення нічного заряду (%)",
+          "history_days": "Глибина історії для аналізу (днів)",
+          "night_start": "Початок нічного тарифу",
+          "night_end": "Кінець нічного тарифу",
+          "operation_mode": "Режим роботи"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не вдалося підключитися"
+    },
+    "abort": {
+      "already_configured": "Пристрій вже налаштовано"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Змінити налаштування Battery Optimizer",
+        "data": {
+          "consumption_sensor": "Датчик споживання енергії будинку (kWh)",
+          "solcast_today_sensor": "Прогноз Solcast (СЬОГОДНІ)",
+          "solcast_tomorrow_sensor": "Прогноз Solcast (ЗАВТРА)",
+          "battery_soc_sensor": "Датчик рівня заряду батареї (%)",
+          "battery_capacity_kwh": "Ємність акумулятора (kWh)",
+          "min_soc": "Мінімальний рівень заряду (%)",
+          "soc_offset": "Похибка/зміщення нічного заряду (%)",
+          "history_days": "Глибина історії для аналізу (днів)",
+          "night_start": "Початок нічного тарифу",
+          "night_end": "Кінець нічного тарифу",
+          "operation_mode": "Режим роботи"
+        }
+      }
+    }
+  }
+}
