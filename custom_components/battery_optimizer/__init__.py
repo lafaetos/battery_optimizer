@@ -19,13 +19,18 @@ from .const import (
     CONF_HISTORY_DAYS,
     CONF_NIGHT_START,
     CONF_NIGHT_END,
+    CONF_SOLAR_THRESHOLD_MODE,
+    CONF_SOLAR_THRESHOLD_CUSTOM,
     MODE_MAX_CHARGE,
+    MODE_THRESHOLD_AUTO,
 )
-from .solcast_helper import get_solcast_data
+from .solcast_helper import get_solcast_data_with_type
 
 _LOGGER = logging.getLogger(__name__)
+_LOGGER.warning("=== BATTERY OPTIMIZER COMPONENT IS STARTING UP ===")
 
 STORAGE_KEY = f"{DOMAIN}_history"
+STORAGE_KEY_TMP = f"{DOMAIN}_tmp"
 STORAGE_VERSION = 1
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -45,11 +50,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Перезавантажуємо інтеграцію при зміні параметрів у меню Configure."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Безпечне вивантаження платформ та даних інтеграції."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
@@ -59,15 +62,26 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
         self.entry = entry
         self.store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self.store_tmp = Store(hass, STORAGE_VERSION, STORAGE_KEY_TMP)
         
         self.hourly_history_workday = [0.5] * 24
         self.hourly_history_weekend = [0.5] * 24
-        self._last_meter_value = None
+        
+        self._hourly_start_values = {}
+        self._last_checked_hour = None
         
         self.target_soc = 20.0
         self.required_kwh = 0.0
         self.day_consumption = 0.0
         self.morning_consumption = 0.0
+        
+        self.workday_morning_consumption = 0.0
+        self.workday_day_consumption = 0.0
+        self.weekend_morning_consumption = 0.0
+        self.weekend_day_consumption = 0.0
+        self.solcast_source_type = "today"
+        self.solar_threshold_value = 0.5
+
         self.night_start = "23:00"
         self.night_end = "05:00"
         self.solar_start = "08:00"
@@ -82,11 +96,10 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(minutes=10),
+            update_interval=timedelta(minutes=4),
         )
 
     async def async_load_history(self):
-        """Завантажуємо збережену історію споживання з диск-сховища."""
         try:
             data = await self.store.async_load()
             if data:
@@ -94,21 +107,52 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
                     self.hourly_history_workday = data["workday"]
                 if "weekend" in data and isinstance(data["weekend"], list) and len(data["weekend"]) == 24:
                     self.hourly_history_weekend = data["weekend"]
-                _LOGGER.info("Successfully loaded hourly consumption history from storage.")
+                
+                # Відновлюємо soc_at_solar_end та дату з основного сховища історії
+                self.soc_at_solar_end = data.get("soc_at_solar_end", 0.0)
+                saved_date_str = data.get("last_tracked_date")
+                if saved_date_str:
+                    try:
+                        self._last_tracked_date = datetime.fromisoformat(saved_date_str).date()
+                    except Exception:
+                        pass
+
+                _LOGGER.info(f"Successfully loaded history and soc_at_solar_end ({self.soc_at_solar_end}%) from storage.")
             else:
                 await self.async_save_history()
+
+            tmp_data = await self.store_tmp.async_load()
+            if tmp_data:
+                saved_hour = tmp_data.get("last_checked_hour")
+                saved_start_values = tmp_data.get("hourly_start_values", {})
+                current_hour = datetime.now().hour
+
+                if saved_hour == current_hour:
+                    self._last_checked_hour = saved_hour
+                    self._hourly_start_values = {int(k): v for k, v in saved_start_values.items()}
+                    _LOGGER.info(f"Restored temporary hourly start values for hour {saved_hour} from _tmp storage.")
         except Exception as e:
-            _LOGGER.error(f"Failed to load consumption history: {e}")
+            _LOGGER.error(f"Failed to load history or temporary data: {e}")
 
     async def async_save_history(self):
-        """Зберігаємо поточну історію споживання на диск."""
         try:
             await self.store.async_save({
                 "workday": self.hourly_history_workday,
                 "weekend": self.hourly_history_weekend,
+                "soc_at_solar_end": self.soc_at_solar_end,
+                "last_tracked_date": self._last_tracked_date.isoformat() if self._last_tracked_date else None,
             })
         except Exception as e:
             _LOGGER.error(f"Failed to save consumption history: {e}")
+
+    async def async_save_tmp_data(self):
+        try:
+            await self.store_tmp.async_save({
+                "last_checked_hour": self._last_checked_hour,
+                "hourly_start_values": self._hourly_start_values,
+            })
+        except Exception as e:
+            _LOGGER.error(f"Failed to save temporary data: {e}")
 
     def _get_config(self, key, default):
         if self.entry.options and key in self.entry.options:
@@ -116,6 +160,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
         return self.entry.data.get(key, default)
 
     async def _async_update_data(self):
+        _LOGGER.info("Coordinator update triggered!")
         await self._update_hourly_consumption()
         self._calculate_optimizer_data()
         return {
@@ -128,8 +173,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
 
     async def _update_hourly_consumption(self):
         now = datetime.now()
-        completed_hour = (now.hour - 1) % 24
-        is_weekend = now.weekday() >= 5
+        current_hour = now.hour
 
         sensor_id = self._get_config(CONF_CONSUMPTION_SENSOR, None)
         if not sensor_id:
@@ -144,27 +188,36 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
         except ValueError:
             return
 
-        if self._last_meter_value is None or current_val < self._last_meter_value:
-            self._last_meter_value = current_val
+        if self._last_checked_hour is None:
+            self._last_checked_hour = current_hour
+            self._hourly_start_values[current_hour] = current_val
+            await self.async_save_tmp_data()
             return
 
-        delta_kwh = current_val - self._last_meter_value
-        self._last_meter_value = current_val
+        if self._last_checked_hour != current_hour:
+            target_hour = self._last_checked_hour
+            target_is_weekend = (now - timedelta(hours=1)).weekday() >= 5
+            start_val = self._hourly_start_values.get(target_hour)
 
-        history_days = self._get_config(CONF_HISTORY_DAYS, 14)
-        alpha = max(0.05, 2.0 / (history_days + 1))
+            if start_val is not None and current_val >= start_val:
+                delta_kwh = current_val - start_val
+                history_days = self._get_config(CONF_HISTORY_DAYS, 14)
+                alpha = max(0.05, 2.0 / (history_days + 1))
 
-        if 0 <= delta_kwh < 50.0:
-            active_history = self.hourly_history_weekend if is_weekend else self.hourly_history_workday
-            old_val = active_history[completed_hour]
-            active_history[completed_hour] = round((1 - alpha) * old_val + alpha * delta_kwh, 3)
-            
-            await self.async_save_history()
+                if 0 <= delta_kwh < 50.0:
+                    active_history = self.hourly_history_weekend if target_is_weekend else self.hourly_history_workday
+                    old_val = active_history[target_hour]
+                    new_val = round((1 - alpha) * old_val + alpha * delta_kwh, 3)
+                    active_history[target_hour] = new_val
+                    await self.async_save_history()
+
+            self._hourly_start_values[current_hour] = current_val
+            self._last_checked_hour = current_hour
+            await self.async_save_tmp_data()
 
     def _parse_time(self, time_str, default_hour):
         try:
-            parsed = datetime.strptime(time_str, "%H:%M").time()
-            return parsed
+            return datetime.strptime(time_str, "%H:%M").time()
         except (ValueError, TypeError):
             return time(default_hour, 0)
 
@@ -176,7 +229,6 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
         
         self.night_start = self._get_config(CONF_NIGHT_START, "23:00")
         self.night_end = self._get_config(CONF_NIGHT_END, "05:00")
-        
         night_end_time = self._parse_time(self.night_end, 5)
         night_end_hour = night_end_time.hour
 
@@ -184,34 +236,39 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
         solcast_tomorrow_entity = self._get_config(CONF_SOLCAST_TOMORROW_SENSOR, None)
         battery_soc_entity = self._get_config(CONF_BATTERY_SOC_SENSOR, None)
 
-        solcast_forecast, solar_start_h, solar_end_h, solcast_state = get_solcast_data(
-            self.hass, solcast_today_entity, solcast_tomorrow_entity
-        )
-
         now = datetime.now()
         is_today_weekend = now.weekday() >= 5
         active_history = self.hourly_history_weekend if is_today_weekend else self.hourly_history_workday
 
+        # Розрахунок сонячного порогу (авто: добова сума / 24, або ручне значення)
+        threshold_mode = self._get_config(CONF_SOLAR_THRESHOLD_MODE, MODE_THRESHOLD_AUTO)
+        if threshold_mode == MODE_THRESHOLD_AUTO:
+            daily_total = sum(active_history)
+            self.solar_threshold_value = round(daily_total / 24.0, 2)
+            hourly_threshold = self.solar_threshold_value
+        else:
+            self.solar_threshold_value = self._get_config(CONF_SOLAR_THRESHOLD_CUSTOM, 0.5)
+            hourly_threshold = self.solar_threshold_value
+
+        # Отримуємо прогноз з урахуванням ефективного сонячного порогу
+        solcast_forecast, solar_start_h, solar_end_h, solcast_state, source_type = get_solcast_data_with_type(
+            self.hass, solcast_today_entity, solcast_tomorrow_entity, threshold=hourly_threshold
+        )
+        self.solcast_source_type = source_type
+
         self.solar_start = f"{solar_start_h:02d}:00"
         self.solar_end = f"{solar_end_h:02d}:00"
-
-        if mode == MODE_MAX_CHARGE and battery_soc_entity:
-            current_date = now.date()
-            if now.hour == solar_end_h and self._last_tracked_date != current_date:
-                soc_state = self.hass.states.get(battery_soc_entity)
-                if soc_state and soc_state.state not in ("unknown", "unavailable"):
-                    try:
-                        self.soc_at_solar_end = float(soc_state.state)
-                        self._last_tracked_date = current_date
-                        _LOGGER.info(f"Captured battery SoC at solar end ({solar_end_h}:00): {self.soc_at_solar_end}%")
-                    except ValueError:
-                        pass
 
         night_end_h = max(0, min(23, night_end_hour))
         solar_start_h = max(0, min(24, solar_start_h))
         solar_end_h = max(solar_start_h, min(24, solar_end_h))
-
         morning_start_h = min(night_end_h, solar_start_h)
+
+        self.workday_morning_consumption = round(sum(self.hourly_history_workday[morning_start_h:solar_start_h]), 2)
+        self.workday_day_consumption = round(sum(self.hourly_history_workday[solar_start_h:solar_end_h]), 2)
+        self.weekend_morning_consumption = round(sum(self.hourly_history_weekend[morning_start_h:solar_start_h]), 2)
+        self.weekend_day_consumption = round(sum(self.hourly_history_weekend[solar_start_h:solar_end_h]), 2)
+
         self.morning_consumption = round(sum(active_history[morning_start_h:solar_start_h]), 2)
         self.day_consumption = round(sum(active_history[solar_start_h:solar_end_h]), 2)
 
@@ -223,7 +280,6 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
             target = (needed_kwh / capacity) * 100.0
 
         target += soc_offset
-
         self.target_soc = max(min_soc, min(100.0, round(target, 1)))
         self.required_kwh = round((self.target_soc / 100.0) * capacity, 2)
 
@@ -231,21 +287,16 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator):
         surplus = solcast_forecast - (total_day_consumption + (capacity - (capacity * (min_soc / 100.0))))
         self.forecast_surplus = round(max(0.0, surplus), 2)
 
-        self.realtime_surplus = 0.0
-        if solcast_state and solcast_state.attributes:
-            detailed_hourly = solcast_state.attributes.get("DetailedHourly", [])
-            current_hour = now.hour
-            for entry in detailed_hourly:
-                period_start = entry.get("period_start")
-                if period_start:
+        # Фіксація SoC на закінчення сонячного дня
+        if mode == MODE_MAX_CHARGE and battery_soc_entity:
+            current_date = now.date()
+            if now.hour == solar_end_h and self._last_tracked_date != current_date:
+                soc_state = self.hass.states.get(battery_soc_entity)
+                if soc_state and soc_state.state not in ("unknown", "unavailable"):
                     try:
-                        dt = datetime.fromisoformat(period_start)
-                        dt_local = dt_util.as_local(dt)
-                        if dt_local.hour == current_hour:
-                            current_pv_estimate = entry.get("pv_estimate", 0.0)
-                            current_consumption = active_history[current_hour]
-                            if current_pv_estimate > current_consumption:
-                                self.realtime_surplus = round(current_pv_estimate - current_consumption, 2)
-                            break
-                    except Exception:
-                        continue
+                        self.soc_at_solar_end = float(soc_state.state)
+                        self._last_tracked_date = current_date
+                        _LOGGER.info(f"Captured battery SoC at solar end ({solar_end_h}:00): {self.soc_at_solar_end}%")
+                        self.hass.async_create_task(self.async_save_history())
+                    except ValueError:
+                        pass

@@ -16,8 +16,12 @@ from .const import (
     CONF_HISTORY_DAYS,
     CONF_NIGHT_START,
     CONF_NIGHT_END,
+    CONF_SOLAR_THRESHOLD_MODE,
+    CONF_SOLAR_THRESHOLD_CUSTOM,
     MODE_MAX_CHARGE,
     MODE_MAX_SOLAR,
+    MODE_THRESHOLD_AUTO,
+    MODE_THRESHOLD_CUSTOM,
 )
 
 class BatteryOptimizerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -53,6 +57,13 @@ class BatteryOptimizerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_HISTORY_DAYS, default=14): vol.Coerce(int),
             vol.Required(CONF_NIGHT_START, default="23:00"): str,
             vol.Required(CONF_NIGHT_END, default="05:00"): str,
+            vol.Required(CONF_SOLAR_THRESHOLD_MODE, default=MODE_THRESHOLD_AUTO): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[MODE_THRESHOLD_AUTO, MODE_THRESHOLD_CUSTOM],
+                    translation_key="threshold_mode"
+                )
+            ),
+            vol.Optional(CONF_SOLAR_THRESHOLD_CUSTOM, default=5.0): vol.Coerce(float),
         })
 
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
@@ -131,6 +142,19 @@ class BatteryOptimizerOptionsFlow(config_entries.OptionsFlow):
                 CONF_NIGHT_END, 
                 default=get_val(CONF_NIGHT_END, "05:00")
             ): str,
+            vol.Required(
+                CONF_SOLAR_THRESHOLD_MODE, 
+                default=get_val(CONF_SOLAR_THRESHOLD_MODE, MODE_THRESHOLD_AUTO)
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[MODE_THRESHOLD_AUTO, MODE_THRESHOLD_CUSTOM],
+                    translation_key="threshold_mode"
+                )
+            ),
+            vol.Optional(
+                CONF_SOLAR_THRESHOLD_CUSTOM, 
+                default=get_val(CONF_SOLAR_THRESHOLD_CUSTOM, 5.0)
+            ): vol.Coerce(float),
         })
 
         return self.async_show_form(step_id="init", data_schema=schema)
